@@ -18,7 +18,7 @@ export async function requestSignInLink(_prev: string | undefined, formData: For
   // page. Left to Auth.js, a known address lands on its built-in
   // /api/auth/verify-request instead — a different URL, which would answer
   // the question the branch above refuses to.
-  await signIn('resend', { email: email.data, redirectTo: '/suppliers', redirect: false })
+  await signIn('resend', { email: email.data, redirectTo: '/rfps', redirect: false })
   redirect('/login/check')
 }
 
