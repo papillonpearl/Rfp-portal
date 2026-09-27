@@ -1,0 +1,3 @@
+company,category,region,status,contact_name,contact_email,is_primary
+Example Power Systems,UPS,Northeast,active,Jordan Example,jordan@example.com,yes
+Example Power Systems,UPS,Northeast,active,Sam Example,sam@example.com,no
