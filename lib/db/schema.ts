@@ -1,8 +1,10 @@
 import { sql } from 'drizzle-orm'
 import {
+  bigint,
   boolean,
   index,
   integer,
+  numeric,
   pgEnum,
   pgTable,
   primaryKey,
@@ -123,6 +125,88 @@ export const supplierContacts = pgTable(
   ],
 )
 
+// ---------------------------------------------------------------------------
+// RFPs, their line items and attachments.
+//
+// VISIBILITY. Every line and attachment is `internal` or `shared`, and the
+// default is `internal`: a row nobody decided about stays with the team.
+// Some fields are internal by kind and carry no toggle at all — an RFP's
+// `internal_notes`, a line's `internal_estimate`. Suppliers never read these
+// tables directly; they get `getSupplierSafeRfp()` (lib/rfps/supplier-safe.ts),
+// which selects shared fields by name rather than stripping internal ones.
+// ---------------------------------------------------------------------------
+
+export const visibility = pgEnum('visibility', ['internal', 'shared'])
+export const rfpType = pgEnum('rfp_type', ['RFP', 'RFQ'])
+export const rfpStatus = pgEnum('rfp_status', ['draft', 'open', 'closed', 'awarded'])
+
+export const rfps = pgTable('rfps', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  title: text('title').notNull(),
+  type: rfpType('type').notNull().default('RFP'),
+  status: rfpStatus('status').notNull().default('draft'),
+  /** Shared: what suppliers read as the RFP's introduction. */
+  description: text('description').notNull().default(''),
+  /** Internal by kind: budget context, strategy, anything for the team only. */
+  internalNotes: text('internal_notes').notNull().default(''),
+  dueAt: timestamp('due_at', { mode: 'date', withTimezone: true }),
+  // Sealed by default, changeable per RFP (open decision #4 in the spec).
+  sealed: boolean('sealed').notNull().default(true),
+  currentRound: integer('current_round').notNull().default(1),
+  createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { mode: 'date', withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { mode: 'date', withTimezone: true }).notNull().defaultNow(),
+})
+
+export const lineItems = pgTable(
+  'line_items',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    rfpId: uuid('rfp_id')
+      .notNull()
+      .references(() => rfps.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    // Site is optional: the 2027 battery RFQ is site-by-site, a generic RFQ
+    // is not (open decision #5).
+    site: text('site'),
+    equipment: text('equipment').notNull(),
+    spec: text('spec').notNull().default(''),
+    // numeric, not float: quantities and money must add up exactly. Drizzle
+    // returns numeric as a string, which keeps it exact until display.
+    qty: numeric('qty', { precision: 14, scale: 3 }).notNull(),
+    unit: text('unit').notNull(),
+    visibility: visibility('visibility').notNull().default('internal'),
+    /** Internal by kind: the team's expected unit price. Never shown to a supplier. */
+    internalEstimate: numeric('internal_estimate', { precision: 14, scale: 2 }),
+    createdAt: timestamp('created_at', { mode: 'date', withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('line_items_rfp_idx').on(t.rfpId, t.position)],
+)
+
+export const attachments = pgTable(
+  'attachments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    rfpId: uuid('rfp_id')
+      .notNull()
+      .references(() => rfps.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    // A private storage key, never a public URL. Files are served through
+    // routes that check who is asking; a public URL would be readable by
+    // anyone it reached, whatever the visibility column said.
+    storageKey: text('storage_key').notNull().unique(),
+    contentType: text('content_type').notNull(),
+    size: bigint('size', { mode: 'number' }).notNull(),
+    visibility: visibility('visibility').notNull().default('internal'),
+    uploadedBy: text('uploaded_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { mode: 'date', withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('attachments_rfp_idx').on(t.rfpId)],
+)
+
+export type Rfp = typeof rfps.$inferSelect
+export type LineItem = typeof lineItems.$inferSelect
+export type Attachment = typeof attachments.$inferSelect
 export type Supplier = typeof suppliers.$inferSelect
 export type SupplierContact = typeof supplierContacts.$inferSelect
 export type User = typeof users.$inferSelect

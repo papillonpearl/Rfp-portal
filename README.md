@@ -7,8 +7,10 @@ the fields marked shared.
 **Test data only** until security approves where real bid data is hosted. No
 real DLR pricing, site data or budget figures.
 
-Built phase by phase from the build spec. **Phase 1 is done**: admin sign-in,
-the supplier directory, CSV import.
+Built phase by phase from the build spec. **Phases 1 and 2 are done**: admin
+sign-in, the supplier directory, CSV import; the RFP builder, with line items
+(by hand or from Excel), attachments, internal/shared visibility and a
+"preview as supplier" page.
 
 ## Running it locally
 
@@ -58,5 +60,7 @@ Run `DATABASE_URL=<test url> npm run db:migrate` once to set it up.
 2. Create a Neon database and set `DATABASE_URL` to its **pooled** connection
    string.
 3. Set `AUTH_SECRET` (`npx auth secret`), `RESEND_API_KEY` and `EMAIL_FROM`.
+   Create a Vercel Blob store with **private** access and connect it, which
+   sets `BLOB_READ_WRITE_TOKEN`.
 4. Run `npm run db:migrate` against the Neon database, then
    `npm run user:add -- <you> admin`.

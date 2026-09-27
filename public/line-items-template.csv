@@ -1,0 +1,4 @@
+site,equipment,spec,qty,unit,visibility,internal_estimate
+Site A,UPS module,500 kVA; N+1,2,ea,shared,
+Site A,Battery string,VRLA; 40 jars,4,string,shared,
+Site B,Chiller,300 ton air-cooled,1,ea,internal,

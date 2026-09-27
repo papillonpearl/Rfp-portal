@@ -5,7 +5,7 @@ import { LoginForm } from './login-form'
 
 export default async function LoginPage(props: PageProps<'/login'>) {
   const session = await auth()
-  if (session?.user) redirect('/suppliers')
+  if (session?.user) redirect('/rfps')
   const { error } = await props.searchParams
 
   return (
