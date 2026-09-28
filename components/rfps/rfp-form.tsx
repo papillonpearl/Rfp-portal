@@ -27,7 +27,7 @@ function toLocalInput(iso: string | null): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-export function RfpForm({ initial }: { initial?: RfpFormValues }) {
+export function RfpForm({ initial, locked = false }: { initial?: RfpFormValues; locked?: boolean }) {
   const [state, action, pending] = useActionState(saveRfp, undefined)
   // Local time exists only in the browser, so the due field renders after
   // hydration; until the admin edits it, the stored instant is sent unchanged.
@@ -35,6 +35,37 @@ export function RfpForm({ initial }: { initial?: RfpFormValues }) {
   const [due, setDue] = useState<string | null>(null)
   const dueIso = due === null ? (initial?.dueAt ?? '') : due ? new Date(due).toISOString() : ''
   const zone = inBrowser ? Intl.DateTimeFormat().resolvedOptions().timeZone : ''
+
+  if (locked && initial) {
+    // Invites are out: only the internal notes can change. Everything else
+    // is sent back exactly as stored, which the server checks.
+    return (
+      <form onSubmit={submitKeepingInput(action)} className="flex max-w-3xl flex-col gap-4">
+        <input type="hidden" name="rfpId" value={initial.id} />
+        <input type="hidden" name="title" value={initial.title} />
+        <input type="hidden" name="type" value={initial.type} />
+        <input type="hidden" name="description" value={initial.description} />
+        <input type="hidden" name="dueAt" value={initial.dueAt ?? ''} />
+        {initial.sealed && <input type="hidden" name="sealed" value="on" />}
+        <p className="rounded-md border bg-muted p-3 text-sm">
+          Invites have gone out, so the title, type, due date, sealing and description are frozen. Only the internal notes
+          can change here.
+        </p>
+        {state?.errors && state.errors.length > 0 && (
+          <p role="alert" className="text-sm text-destructive">{state.errors[0]}</p>
+        )}
+        <div className="flex flex-col gap-2 rounded-md border border-dashed p-3">
+          <Label htmlFor="internalNotes">Internal notes <span className="font-normal text-muted-foreground">— team only, never shown to a supplier</span></Label>
+          <textarea id="internalNotes" name="internalNotes" defaultValue={initial.internalNotes} rows={6}
+            className="rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+        </div>
+        <div className="flex gap-2">
+          <Button type="submit" disabled={pending}>{pending ? 'Saving…' : 'Save notes'}</Button>
+          <Link href={`/rfps/${initial.id}`} className={buttonVariants({ variant: 'ghost' })}>Cancel</Link>
+        </div>
+      </form>
+    )
+  }
 
   return (
     <form onSubmit={submitKeepingInput(action)} className="flex max-w-3xl flex-col gap-5">

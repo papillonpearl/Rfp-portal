@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { z } from 'zod'
 import { Forbidden, requireAdmin, type Staff } from '@/lib/authz'
@@ -20,12 +21,14 @@ import {
   getRfp,
   isUuid,
   recordAttachment,
+  RfpLocked,
   setAttachmentVisibility,
   setLineVisibility,
   updateLine,
   updateRfp,
 } from '@/lib/rfps/store'
 import { lineInput, rfpInput } from '@/lib/rfps/validation'
+import { reissueLink, revokeInvite, sendInvites, type SendResult } from '@/lib/invites/store'
 
 // Every action checks the caller's role itself (tests/authz.test.ts enforces
 // it) and names the RFP it acts on; the store scopes every write by that id.
@@ -68,7 +71,12 @@ export async function saveRfp(_prev: Errors, fd: FormData): Promise<Errors> {
   const existing = str(fd, 'rfpId')
   let id: string
   if (existing) {
-    if (!isUuid(existing) || !(await updateRfp(existing, parsed.data))) return { errors: ['RFP not found'] }
+    try {
+      if (!isUuid(existing) || !(await updateRfp(existing, parsed.data))) return { errors: ['RFP not found'] }
+    } catch (e) {
+      if (e instanceof RfpLocked) return { errors: ['Invites have been sent, so only the internal notes can change. Other changes go out as an addendum.'] }
+      throw e
+    }
     id = existing
   } else {
     id = await createRfp(parsed.data, who.id)
@@ -96,10 +104,15 @@ export async function saveLine(_prev: Errors, fd: FormData): Promise<Errors> {
   const parsed = lineFromForm(fd)
   if (!parsed.success) return { errors: [...new Set(parsed.error.issues.map((i) => i.message))] }
   const lineId = str(fd, 'lineId')
-  if (lineId) {
-    if (!(await updateLine(rfpId, lineId, parsed.data))) return { errors: ['Line not found'] }
-  } else {
-    await addLines(rfpId, [parsed.data])
+  try {
+    if (lineId) {
+      if (!(await updateLine(rfpId, lineId, parsed.data))) return { errors: ['Line not found'] }
+    } else {
+      await addLines(rfpId, [parsed.data])
+    }
+  } catch (e) {
+    if (e instanceof RfpLocked) return { errors: [e.message] }
+    throw e
   }
   revalidatePath(`/rfps/${rfpId}`)
   return { errors: [] }
@@ -169,7 +182,13 @@ export async function importLines(_prev: LineImportState, fd: FormData): Promise
       lines.push(p.data)
     }
     if (!(await getRfp(rfpId))) return { stage: 'error', message: 'RFP not found' }
-    const added = await addLines(rfpId, lines)
+    let added: number
+    try {
+      added = await addLines(rfpId, lines)
+    } catch (e) {
+      if (e instanceof RfpLocked) return { stage: 'error', message: e.message }
+      throw e
+    }
     revalidatePath(`/rfps/${rfpId}`)
     return { stage: 'done', added }
   }
@@ -187,7 +206,9 @@ export async function uploadAttachment(_prev: Errors, fd: FormData): Promise<Err
   if (file.size > MAX_ATTACHMENT_BYTES) return { errors: ['That file is over 4 MB'] }
   const name = file.name.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 200) || 'file'
   if (!isAllowedFile(name)) return { errors: [`.${extensionOf(name) || '?'} files cannot be attached`] }
-  if (!(await getRfp(rfpId))) return { errors: ['RFP not found'] }
+  const rfp = await getRfp(rfpId)
+  if (!rfp) return { errors: ['RFP not found'] }
+  if (rfp.status !== 'draft') return { errors: [new RfpLocked().message] }
 
   const key = newStorageKey(rfpId)
   const contentType = file.type || 'application/octet-stream'
@@ -221,5 +242,59 @@ export async function removeAttachment(fd: FormData): Promise<void> {
     // an unreachable file rather than a broken page.
     await fileStore().delete(key).catch((e) => console.error('[attachments] could not delete stored file', e))
   }
+  revalidatePath(`/rfps/${rfpId}`)
+}
+
+// --- Invites ---------------------------------------------------------------
+
+/**
+ * Where links in emails point. APP_URL when set, which is the right answer
+ * behind anything that rewrites the host; otherwise this request's own
+ * origin, which is correct on Vercel.
+ */
+async function siteOrigin(): Promise<string> {
+  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, '')
+  const h = await headers()
+  const host = h.get('x-forwarded-host') ?? h.get('host')
+  const proto = h.get('x-forwarded-proto') ?? (host?.startsWith('localhost') ? 'http' : 'https')
+  return `${proto}://${host}`
+}
+
+export type SendState = { errors: string[]; result?: SendResult } | undefined
+
+export async function sendInvitesAction(_prev: SendState, fd: FormData): Promise<SendState> {
+  const who = await admin()
+  if ('errors' in who) return who
+  const rfpId = rfpIdFrom(fd)
+  const supplierIds = fd.getAll('supplierId').map(String)
+  if (supplierIds.length === 0) return { errors: ['Select at least one supplier'] }
+  try {
+    const result = await sendInvites({
+      rfpId,
+      supplierIds,
+      allContacts: fd.get('allContacts') === 'on',
+      staffId: who.id,
+      origin: await siteOrigin(),
+    })
+    revalidatePath(`/rfps/${rfpId}`)
+    return { errors: [], result }
+  } catch (e) {
+    return { errors: [(e as Error).message] }
+  }
+}
+
+export async function revokeInviteAction(fd: FormData): Promise<void> {
+  const who = await admin()
+  if ('errors' in who) return
+  const rfpId = rfpIdFrom(fd)
+  await revokeInvite(rfpId, str(fd, 'inviteId'), who.id)
+  revalidatePath(`/rfps/${rfpId}`)
+}
+
+export async function reissueLinkAction(fd: FormData): Promise<void> {
+  const who = await admin()
+  if ('errors' in who) return
+  const rfpId = rfpIdFrom(fd)
+  await reissueLink(rfpId, str(fd, 'linkId'), who.id, await siteOrigin())
   revalidatePath(`/rfps/${rfpId}`)
 }

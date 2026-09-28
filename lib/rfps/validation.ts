@@ -63,8 +63,10 @@ export const lineInput = z.object({
   qty: decimal('Quantity', 3, { positive: true }),
   unit: text('Unit', 30),
   visibility: visibilityInput.default('internal'),
+  // .optional() first: in Zod 4 a transformed unknown is otherwise required.
   internalEstimate: z
     .unknown()
+    .optional()
     .transform((v, ctx) => {
       if (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) return null
       const d = parseDecimal(v, 2)

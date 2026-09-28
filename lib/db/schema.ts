@@ -4,6 +4,7 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   numeric,
   pgEnum,
   pgTable,
@@ -204,6 +205,120 @@ export const attachments = pgTable(
   (t) => [index('attachments_rfp_idx').on(t.rfpId)],
 )
 
+// ---------------------------------------------------------------------------
+// Invites, portal links and bids (Phase 3).
+//
+// An INVITE is one supplier on one RFP. A LINK is one contact's way in to
+// that invite, so the log can say which person acted. The link's token is
+// never stored: only its SHA-256. A leaked database cannot be used to open
+// anyone's portal.
+// ---------------------------------------------------------------------------
+
+export const invites = pgTable(
+  'invites',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    rfpId: uuid('rfp_id')
+      .notNull()
+      .references(() => rfps.id, { onDelete: 'cascade' }),
+    supplierId: uuid('supplier_id')
+      .notNull()
+      .references(() => suppliers.id, { onDelete: 'restrict' }),
+    sentAt: timestamp('sent_at', { mode: 'date', withTimezone: true }).notNull().defaultNow(),
+    /** First time any of this supplier's links reached the portal. */
+    openedAt: timestamp('opened_at', { mode: 'date', withTimezone: true }),
+    /** After this, links stop working entirely (viewing included). */
+    expiresAt: timestamp('expires_at', { mode: 'date', withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { mode: 'date', withTimezone: true }),
+    sentBy: text('sent_by').references(() => users.id, { onDelete: 'set null' }),
+  },
+  (t) => [uniqueIndex('invites_rfp_supplier_key').on(t.rfpId, t.supplierId)],
+)
+
+export const inviteLinks = pgTable(
+  'invite_links',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    inviteId: uuid('invite_id')
+      .notNull()
+      .references(() => invites.id, { onDelete: 'cascade' }),
+    // The contact may later be edited or removed; the address the link was
+    // sent to is kept as sent.
+    contactId: uuid('contact_id').references(() => supplierContacts.id, { onDelete: 'set null' }),
+    email: text('email').notNull(),
+    tokenHash: text('token_hash').notNull().unique(),
+    createdAt: timestamp('created_at', { mode: 'date', withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp('revoked_at', { mode: 'date', withTimezone: true }),
+    lastUsedAt: timestamp('last_used_at', { mode: 'date', withTimezone: true }),
+    /** 'sent' | 'failed' | 'logged' (development, no mail provider). */
+    emailStatus: text('email_status').notNull().default('sent'),
+  },
+  (t) => [index('invite_links_invite_idx').on(t.inviteId)],
+)
+
+export const bids = pgTable(
+  'bids',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    inviteId: uuid('invite_id')
+      .notNull()
+      .references(() => invites.id, { onDelete: 'cascade' }),
+    lineItemId: uuid('line_item_id')
+      .notNull()
+      .references(() => lineItems.id, { onDelete: 'restrict' }),
+    round: integer('round').notNull(),
+    /** Null means "no bid on this line". */
+    unitPrice: numeric('unit_price', { precision: 14, scale: 2 }),
+    leadTimeDays: integer('lead_time_days'),
+    notes: text('notes').notNull().default(''),
+    /** Null while a draft. Once set, the row never changes again. */
+    submittedAt: timestamp('submitted_at', { mode: 'date', withTimezone: true }),
+    updatedAt: timestamp('updated_at', { mode: 'date', withTimezone: true }).notNull().defaultNow(),
+    updatedByLink: uuid('updated_by_link').references(() => inviteLinks.id, { onDelete: 'set null' }),
+  },
+  (t) => [uniqueIndex('bids_invite_line_round_key').on(t.inviteId, t.lineItemId, t.round)],
+)
+
+/**
+ * One row per supplier per round they submitted. It is what tells "confirmed,
+ * nothing changed" apart from "never replied", which the bids table alone
+ * cannot once prices carry forward between rounds (Phase 4).
+ */
+export const roundSubmissions = pgTable(
+  'round_submissions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    inviteId: uuid('invite_id')
+      .notNull()
+      .references(() => invites.id, { onDelete: 'cascade' }),
+    round: integer('round').notNull(),
+    submittedAt: timestamp('submitted_at', { mode: 'date', withTimezone: true }).notNull().defaultNow(),
+    submittedByLink: uuid('submitted_by_link').references(() => inviteLinks.id, { onDelete: 'set null' }),
+  },
+  (t) => [uniqueIndex('round_submissions_invite_round_key').on(t.inviteId, t.round)],
+)
+
+/**
+ * Append-only. Every send, open, save and submission, by staff or supplier.
+ * Nothing in the application updates or deletes a row here.
+ */
+export const activityLog = pgTable(
+  'activity_log',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    actorType: text('actor_type').notNull(), // 'staff' | 'supplier' | 'system'
+    actorId: text('actor_id'),
+    rfpId: uuid('rfp_id').references(() => rfps.id, { onDelete: 'cascade' }),
+    action: text('action').notNull(),
+    detail: jsonb('detail').notNull().default({}),
+    createdAt: timestamp('created_at', { mode: 'date', withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('activity_log_rfp_idx').on(t.rfpId, t.createdAt)],
+)
+
+export type Invite = typeof invites.$inferSelect
+export type InviteLink = typeof inviteLinks.$inferSelect
+export type Bid = typeof bids.$inferSelect
 export type Rfp = typeof rfps.$inferSelect
 export type LineItem = typeof lineItems.$inferSelect
 export type Attachment = typeof attachments.$inferSelect

@@ -161,11 +161,12 @@ describe('structure', () => {
       if (!/^['"]use server['"]/m.test(src)) continue
       if (PUBLIC.some((p) => file.endsWith(p))) continue
       // A local helper counts as a check only if it calls one itself.
-      const guards = ['requireAdmin', 'requireStaff']
+      // Supplier-side actions resolve the portal link instead of a staff session.
+      const guards = file.includes(`${path.sep}portal${path.sep}`) ? ['requirePortalAccess'] : ['requireAdmin', 'requireStaff']
       for (const m of src.matchAll(/^async function (\w+)\s*\([^)]*\)[^{]*\{([\s\S]*?)\n\}/gm)) {
-        if (/require(Admin|Staff)\(\)/.test(m[2])) guards.push(m[1])
+        if (/require(Admin|Staff)\(\)|requirePortalAccess\(/.test(m[2])) guards.push(m[1])
       }
-      const guard = new RegExp(`\\b(${guards.join('|')})\\(\\)`)
+      const guard = new RegExp(`\\b(${guards.join('|')})\\(`)
       const re = /export async function (\w+)\s*\([^)]*\)[^{]*\{([\s\S]*?)\n\}/g
       for (const m of src.matchAll(re)) {
         const head = m[2].slice(0, 300)

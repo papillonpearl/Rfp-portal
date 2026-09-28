@@ -3,9 +3,10 @@
 # Supplier RFP Portal — project context
 
 Admin team runs RFPs/RFQs; suppliers respond through per-RFP links. Built in
-six phases from "Supplier RFP Portal — Build Spec" (25 Sep 2026). **Phases 1
-and 2 are done**: admin sign-in, supplier directory and CSV import; the RFP
-builder, line items (by hand or from Excel), attachments and visibility.
+six phases from "Supplier RFP Portal — Build Spec" (25 Sep 2026). **Phases
+1-3 are done**: admin sign-in, supplier directory and CSV import; the RFP
+builder, line items, attachments and visibility; invites, the supplier portal
+and bidding.
 
 **Test data only** until DLR security approves hosting. Seeded suppliers are
 invented and use `example.com` addresses, which is reserved and receives no
@@ -117,6 +118,65 @@ What Phase 1 already enforces:
   exist (Phase 3), and it is sealed in the application, not cryptographically
   (see below).
 
+## Invites and the supplier portal (Phase 3)
+
+- **An invite is one supplier on one RFP; a link is one contact's way in.**
+  Only the primary contact is emailed unless the admin ticks "every contact",
+  and each emailed contact gets their own link, so the log says which person
+  acted. There is one email per link, never a shared To or CC.
+- **Tokens: 32 random bytes, only their SHA-256 stored.** They never appear
+  in a URL a server sees:
+  1. The email links to `/portal/enter#<token>`.
+  2. That page's script takes the token out of the address bar and POSTs it
+     to `/api/portal/enter`.
+  3. The route sets an **httpOnly cookie scoped to `/portal/<linkId>`**,
+     and the browser goes to `/portal/<linkId>`.
+
+  Mail scanners fetch an empty shell and open nothing. The tests read tokens
+  out of mocked emails, the only place they exist.
+- **`requirePortalAccess(linkId)`** (`lib/portal/session.ts`) is the portal's
+  `requireStaff`. A single query needs both the link id from the URL and the
+  hash of that link's cookie, so a cookie for link A at link B's address
+  matches nothing, even under B's cookie name (checked live). Revoked links,
+  revoked invites, expired invites and draft RFPs all return null, and every
+  case renders the same "not valid" page with nothing of the RFP on it.
+  Portal actions must call it; the structural test in `tests/authz.test.ts`
+  enforces that per directory.
+- **Every bid read and write is keyed on the verified `access.inviteId`.**
+  There is no parameter through which another supplier's bids could be
+  named. Bids are accepted only on the **shared lines of that invite's own
+  RFP**; an internal line id or another RFP's line id is refused.
+- **Submission is final for the round**, and the database enforces it:
+  - a trigger refuses any UPDATE or DELETE of a bid with `submitted_at` set;
+  - `round_submissions` has one row per supplier per round, checked under a
+    row lock so a double-click cannot submit twice.
+
+  Revisions are new rounds (Phase 4). Drafts upsert, and only while
+  unsubmitted.
+- **After the due date** a link still shows the request but takes no bids.
+  **Links stop entirely `LINK_GRACE_DAYS` (30) after the due date.**
+- **Sending opens the RFP, and an open RFP is frozen** (`RfpLocked` in
+  `lib/rfps/store.ts`): lines, attachments and shared details. Only the
+  internal notes can still change. The UI hides the controls, and the store
+  refuses a crafted request anyway. You can't send without a future due date
+  and at least one shared line (`sendBlockers`).
+- **Resend = reissue.** The old link is revoked and a new token is sent,
+  because the old one was never stored and so can't be sent again. **Revoke**
+  stops every link for that supplier at once.
+- **The activity log started here, not in Phase 6**, because the spec's "every
+  supplier read and write is logged" applies from the first supplier request.
+  It is append-only **at the database** (a trigger refuses UPDATE and DELETE).
+  Detail carries ids and counts, **never amounts**: staff read the log, and a
+  sealed bid must not be readable through it. Tested.
+- **The tracker shows dates, never amounts.** Amounts belong to the comparison
+  view (Phase 5), which is where sealing must be enforced.
+- `APP_URL` sets the origin in emailed links. When it's unset, the request's
+  own origin is used, which is correct on Vercel.
+
+**Zod 4: `z.unknown().transform(...)` is REQUIRED.** A missing key is refused
+with "expected nonoptional". Use `.optional()` before `.transform()` for any
+field that may be absent. Five tests found it at once.
+
 ## Forms: `submitKeepingInput`
 
 React 19 clears every uncontrolled field after `<form action={fn}>` finishes,
@@ -124,7 +184,9 @@ React 19 clears every uncontrolled field after `<form action={fn}>` finishes,
 one field, resubmits, and is told the others are empty. Found live on the
 line form. Any form whose action can refuse its input uses
 `onSubmit={submitKeepingInput(action)}` (`lib/forms.ts`). File pickers are
-the exception: clearing those is expected.
+the exception: clearing those is expected. It passes the **submitter** to
+`FormData`; without it the pressed button's `name=value` is lost, and "Save
+draft" and "Submit" become the same request.
 
 **`toLocaleString` throws if `dateStyle`/`timeStyle` are combined with
 `timeZoneName`**, and took every page with a due date down.
@@ -161,18 +223,12 @@ it and kills your own command. Use `kill $(pgrep -f 'next de[v]')`.
 
 Agreed before Phase 1; build them when the phase arrives:
 
-- `invites`: add `expires_at`, `revoked_at`; store **`token_hash`**, never the
-  token.
-- **One link per contact**, not per supplier, so the log can say which person
-  acted, grouped under the supplier's invite.
-- A **per-round submission record** (supplier, round, submitted_at), so
-  "confirmed unchanged" and "never replied" differ. Without it the stale flag
-  can't tell them apart.
+- ~~Invites with expiry, revocation and hashed tokens; one link per contact;
+  a per-round submission record.~~ **Done in Phase 3.**
 - `attachments.update_id`, so an addendum's files belong to the update and
   only its recipients see them. **`getSupplierSafeRfp` must then take the
   supplier into account**, not only visibility.
-- **Lock line edits once an RFP is open.** Changes after that are addenda
-  (Phase 4). Nothing stops editing today because nothing can open an RFP yet.
+- ~~Lock line edits once an RFP is open.~~ **Done in Phase 3.**
 - `questions`: a separate **broadcast text** that the admin can edit, because
   removing the name doesn't anonymise "our Model X…".
 - **Sealed bids are sealed in the application, not cryptographically.**

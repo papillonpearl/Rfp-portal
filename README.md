@@ -7,10 +7,11 @@ the fields marked shared.
 **Test data only** until security approves where real bid data is hosted. No
 real DLR pricing, site data or budget figures.
 
-Built phase by phase from the build spec. **Phases 1 and 2 are done**: admin
+Built phase by phase from the build spec. **Phases 1-3 are done**: admin
 sign-in, the supplier directory, CSV import; the RFP builder, with line items
 (by hand or from Excel), attachments, internal/shared visibility and a
-"preview as supplier" page.
+"preview as supplier" page; invites (select all or by category), the private
+supplier portal, and bidding with drafts and a final submission.
 
 ## Running it locally
 
