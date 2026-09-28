@@ -11,8 +11,9 @@ export default async function EditRfpPage(props: PageProps<'/rfps/[id]/edit'>) {
   if (!rfp) notFound()
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-xl font-semibold">Edit details</h1>
+      <h1 className="text-xl font-semibold">{rfp.status === 'draft' ? 'Edit details' : 'Internal notes'}</h1>
       <RfpForm
+        locked={rfp.status !== 'draft'}
         initial={{
           id: rfp.id,
           title: rfp.title,

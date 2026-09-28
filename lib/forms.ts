@@ -13,7 +13,10 @@ import { startTransition, type FormEvent } from 'react'
 export function submitKeepingInput(action: (fd: FormData) => void) {
   return (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    const fd = new FormData(e.currentTarget)
+    // Pass the submitter, or the pressed button's name=value is lost and
+    // "Save draft" and "Submit" become the same request.
+    const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLElement | null
+    const fd = new FormData(e.currentTarget, submitter)
     startTransition(() => action(fd))
   }
 }

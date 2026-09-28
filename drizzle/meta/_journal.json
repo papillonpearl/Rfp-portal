@@ -15,6 +15,20 @@
       "when": 1790551073404,
       "tag": "0001_rfp_builder",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790603680861,
+      "tag": "0002_invites_bids",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790603699880,
+      "tag": "0003_immutable_records",
+      "breakpoints": true
     }
   ]
 }
